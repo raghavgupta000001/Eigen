@@ -4,6 +4,7 @@ import { ApiResponse } from "../utils/Apiresponse.js";
 import { asyncHandler } from "../utils/AsyncHandler.js";
 import { Attendance } from "../models/attendance.model.js";
 import { User } from "../models/user.model.js";
+import { Team } from "../models/team.model.js"; 
 const ALLOWED_CLUBS = [
     'CODEBASE', 'KERNEL', 'ARC ROBOTICS', 'ALGORITHMUS', 
     'CYPHER', 'GDF', 'GFG', 'TGCC', 'TECHKNOW'
