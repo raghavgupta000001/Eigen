@@ -4,6 +4,9 @@ import '../models/attendance_model.dart';
 import '../models/team_model.dart';
 import '../services/event_service.dart';
 import 'qr_scanner_screen.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 class EventDetailsScreen extends StatefulWidget {
   final EventModel event;
@@ -17,6 +20,9 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
   final EventService _eventService = EventService();
   bool _isLoading = true;
   List<dynamic> _allAttendees = [];
+
+  // NEW: State variable to control the view! (This was missing)
+  bool _isTeamView = true;
 
   @override
   void initState() {
@@ -33,6 +39,61 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
     });
   }
 
+  Future<void> _generateAndSharePDF() async {
+    final pdf = pw.Document();
+
+    List<List<String>> tableData = [
+      ['Name', 'Type / Team', 'Status']
+    ];
+
+    for (var item in _allAttendees) {
+      if (item is TeamModel) {
+        for (var member in item.members) {
+          tableData.add([member.name, item.teamName, member.status]);
+        }
+      } else if (item is AttendanceModel) {
+        tableData.add([item.name, 'Individual', item.status]);
+      }
+    }
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        build: (pw.Context context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                '${widget.event.title} - Attendance Report',
+                style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Text('Generated on: ${DateTime.now().toString().split('.')[0]}'),
+              pw.SizedBox(height: 20),
+              pw.TableHelper.fromTextArray(
+                headers: tableData.first,
+                data: tableData.sublist(1),
+                headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+                headerDecoration: const pw.BoxDecoration(color: PdfColors.blueGrey800),
+                cellHeight: 30,
+                cellAlignments: {
+                  0: pw.Alignment.centerLeft,
+                  1: pw.Alignment.centerLeft,
+                  2: pw.Alignment.center,
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: '${widget.event.title}_Attendance.pdf',
+    );
+  }
+
   Future<void> _openScannerAndRefresh(String type) async {
     await Navigator.push(
       context,
@@ -43,9 +104,11 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Filter logic works for both Teams and Individuals because they both have a 'status' or 'teamStatus'
     final List<dynamic> inside = _allAttendees.where((s) => (s is TeamModel ? s.teamStatus : s.status) == 'IN').toList();
     final List<dynamic> outside = _allAttendees.where((s) => (s is TeamModel ? s.teamStatus : s.status) == 'OUT').toList();
+
+    // NEW: Check if we have team data (This was missing)
+    bool hasTeamData = _allAttendees.isNotEmpty && _allAttendees.first is TeamModel;
 
     return DefaultTabController(
       length: 3,
@@ -54,6 +117,29 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
         appBar: AppBar(
           title: Text(widget.event.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
           backgroundColor: Colors.black,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+              tooltip: 'Export PDF',
+              onPressed: () {
+                if (_allAttendees.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No data to export!')));
+                  return;
+                }
+                _generateAndSharePDF();
+              },
+            ),
+            if (hasTeamData)
+              IconButton(
+                icon: Icon(_isTeamView ? Icons.person : Icons.groups, color: Colors.blueAccent),
+                tooltip: 'Toggle View',
+                onPressed: () {
+                  setState(() {
+                    _isTeamView = !_isTeamView;
+                  });
+                },
+              )
+          ],
           bottom: const TabBar(
             indicatorColor: Colors.white,
             labelColor: Colors.white,
@@ -70,8 +156,6 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
             _buildList(outside),
           ],
         ),
-
-        // SCANNER BUTTONS
         bottomNavigationBar: Container(
           padding: const EdgeInsets.all(16.0),
           decoration: const BoxDecoration(
@@ -106,9 +190,18 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
     );
   }
 
-  // Decides whether to draw a normal list or a team list
   Widget _buildList(List<dynamic> items) {
     if (items.isEmpty) return const Center(child: Text('No records found.', style: TextStyle(color: Colors.grey)));
+
+    // NEW: Flatten the team list if the user toggled to "Member View" (This was missing)
+    List<dynamic> displayItems = items;
+    if (!_isTeamView && items.first is TeamModel) {
+      List<AttendanceModel> flattenedMembers = [];
+      for (var team in items) {
+        flattenedMembers.addAll((team as TeamModel).members);
+      }
+      displayItems = flattenedMembers;
+    }
 
     return RefreshIndicator(
       onRefresh: _loadAttendees,
@@ -116,9 +209,9 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
       backgroundColor: Colors.white,
       child: ListView.builder(
         padding: const EdgeInsets.all(8),
-        itemCount: items.length,
+        itemCount: displayItems.length,
         itemBuilder: (context, index) {
-          final item = items[index];
+          final item = displayItems[index];
           if (item is TeamModel) {
             return _buildTeamCard(item);
           } else {
@@ -129,7 +222,6 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
     );
   }
 
-  // The UI for an Individual Student
   Widget _buildIndividualTile(AttendanceModel student) {
     Color statusColor = student.status == 'IN' ? Colors.greenAccent : (student.status == 'OUT' ? Colors.redAccent : Colors.grey);
     return ListTile(
@@ -139,7 +231,6 @@ class _EventDetailsScreenState extends State<EventDetailsScreen> {
     );
   }
 
-  // The New UI for a Team
   Widget _buildTeamCard(TeamModel team) {
     Color teamStatusColor = team.teamStatus == 'IN' ? Colors.greenAccent : Colors.grey;
 
