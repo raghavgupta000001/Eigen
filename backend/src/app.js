@@ -4,6 +4,7 @@ import express from 'express';
 import userRouter from "./routes/user.routes.js"
 import eventRouter from "./routes/event.routes.js"
 import teamRouter from "./routes/team.routes.js"
+import pingRouter from './routes/ping.routes.js';
 
 const app = express();
 app.use(cookieParser())
@@ -30,7 +31,7 @@ app.use(express.static("public"))
 app.use("/api/v1/users" , userRouter)
 app.use("/api/v1/events" , eventRouter)
 app.use("/api/v1/teams" , teamRouter)
-
+app.use("/api/v1/ping" , pingRouter)
 // --- 2. GLOBAL ERROR HANDLER (MUST BE EXACTLY HERE) ---
 // This acts as the final safety net. If any route above throws an ApiError, 
 // it falls into this function, which forces Express to send clean JSON instead of an HTML crash page.
