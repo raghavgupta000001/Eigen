@@ -266,13 +266,72 @@ const getMyClubEvents = asyncHandler(async (req, res) => {
 const getEventAttendees = asyncHandler(async (req, res) => {
     const { eventId } = req.params;
 
-    // Fetch all attendance documents for this event, and 'populate' the user's name
-    const attendees = await Attendance.find({ event: eventId })
-        .populate("user", "name email");
+    const event = await Event.findById(eventId);
+    if (!event) throw new ApiError(404, "Event not found");
 
-    return res.status(200).json(
-        new ApiResponse(200, attendees, "Attendees fetched successfully")
-    );
+    // THE FIX: If participationType is missing (old events), treat it as INDIVIDUAL
+    const pType = event.participationType || 'INDIVIDUAL';
+
+    // ==========================================
+    // PATH A: INDIVIDUAL EVENT
+    // ==========================================
+    if (pType === 'INDIVIDUAL') {
+        const attendees = await Attendance.find({ event: eventId })
+            .populate("user", "name email qrCodeIdentifier");
+        
+        return res.status(200).json(
+            new ApiResponse(200, { type: 'INDIVIDUAL', data: attendees }, "Individual attendees fetched")
+        );
+    }
+    
+    // ==========================================
+    // PATH B: TEAM EVENT
+    // ==========================================
+    else {
+        // 1. Fetch all teams for this event
+        const teams = await Team.find({ event: eventId })
+            .populate("leader", "name email")
+            .populate("members", "name email qrCodeIdentifier");
+
+        // 2. Fetch all attendance records to figure out who is IN/OUT
+        const attendances = await Attendance.find({ event: eventId });
+        
+        // Create a fast lookup map for statuses (userId -> status)
+        const statusMap = {};
+        attendances.forEach(att => {
+            statusMap[att.user.toString()] = att.status;
+        });
+
+        // 3. Format the data to group members under their teams
+        const formattedTeams = teams.map(team => {
+            let isTeamIn = false; // We consider a team "IN" if at least one member is scanned IN
+
+            const membersWithStatus = team.members.map(member => {
+                const status = statusMap[member._id.toString()] || 'REGISTERED';
+                if (status === 'IN') isTeamIn = true; 
+                
+                return {
+                    _id: member._id,
+                    name: member.name,
+                    email: member.email,
+                    status: status
+                };
+            });
+
+            return {
+                _id: team._id,
+                teamName: team.teamName,
+                leaderName: team.leader ? team.leader.name : 'Unknown',
+                teamSize: team.teamSize,
+                teamStatus: isTeamIn ? 'IN' : 'REGISTERED',
+                members: membersWithStatus
+            };
+        });
+
+        return res.status(200).json(
+            new ApiResponse(200, { type: 'TEAM', data: formattedTeams }, "Team attendees fetched")
+        );
+    }
 });
 
 const scanQrCode = asyncHandler(async (req, res) => {
